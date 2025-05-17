@@ -1,6 +1,7 @@
-# PandasAI + Gradio
+# FluentDB
 
 ## Project Goal
+It is PandasAI + Gradio.
 Build a simple app completely in Python (with PandasAI and Gradio) that allows user to query a database.
 
 
