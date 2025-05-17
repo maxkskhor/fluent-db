@@ -1,3 +1,4 @@
+import os
 import time
 
 import gradio as gr
@@ -6,6 +7,10 @@ import pandasai as pai
 from pandasai.core.response import BaseResponse
 from src.backend.local_llm import LocalLLM
 from src.config.llm_config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODELS
+
+absolute_script_path = os.path.abspath(__file__)
+script_directory = os.path.dirname(absolute_script_path)
+
 
 ROLE_SYSTEM = """You are an expert data scientist proficient in SQL and Pandas."""
 llm = LocalLLM(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL, model=DEEPSEEK_MODELS[0])
@@ -35,7 +40,7 @@ class SidebarChatInterface(gr.ChatInterface):
 
 
 def setup_agent() -> pai.Agent:
-    df = pai.read_csv("heart.csv")
+    df = pai.read_csv(f"{script_directory }/heart.csv")
     return pai.Agent(
         dfs=[df],
         config=None,
@@ -84,6 +89,7 @@ with gr.Blocks(title='FluentDB', fill_height=True) as main_block:
         examples=["What is the average age?"],
         save_history=True,
         fill_height=True,
+        fill_width=False,
     )
 
 

@@ -35,7 +35,7 @@ class Logger:
     _console_sink_id = None
     _file_sink_id = None
 
-    def __init__(self, save_logs: bool = True, verbose: bool = False):
+    def __init__(self, save_logs: bool = False, verbose: bool = True):
         """
         Initializes and configures the Loguru logger.
         Args:
@@ -45,7 +45,7 @@ class Logger:
         """
         self.verbose = verbose
         self.save_logs = save_logs
-        self._configured_console_level_name = "INFO" if self.verbose else "WARNING"
+        self._configured_console_level_name = "DEBUG" if self.verbose else "INFO"
 
         # Attempt to remove previously configured sinks by this class.
         # This ensures that re-instantiating Logger updates the configuration
@@ -75,24 +75,24 @@ class Logger:
         #     colorize=True,  # Loguru adds nice coloring to console output.
         #     # Set to False if strict adherence to non-colored output is needed.
         # )
-
-        if self.save_logs:
-            # The file log level should match the verbosity set for the console,
-            # mirroring the original behavior where the file handler respected the logger's level.
-            file_sink_level = self._configured_console_level_name
-            Logger._file_sink_id = logger.add(
-                "pandasai.log",  # Name of the log file, as in the original.
-                level=file_sink_level,
-                format="{time:YYYY-MM-DD HH:mm:ss} [{level}] {message}",  # Consistent format.
-                rotation="10 MB",  # Adds log rotation, a common best practice.
-                retention="7 days",  # Keeps logs for a week.
-                encoding="utf-8",  # Standard encoding for log files.
-                # enqueue=True,  # For asynchronous logging; useful in high-throughput scenarios.
-                # Not in the original, but a good Loguru feature to be aware of.
-            )
-        else:
-            # Ensure _file_sink_id is reset if file logging is disabled.
-            Logger._file_sink_id = None
+        #
+        # if self.save_logs:
+        #     # The file log level should match the verbosity set for the console,
+        #     # mirroring the original behavior where the file handler respected the logger's level.
+        #     file_sink_level = self._configured_console_level_name
+        #     Logger._file_sink_id = logger.add(
+        #         "pandasai.log",  # Name of the log file, as in the original.
+        #         level=file_sink_level,
+        #         format="{time:YYYY-MM-DD HH:mm:ss} [{level}] {message}",  # Consistent format.
+        #         rotation="10 MB",  # Adds log rotation, a common best practice.
+        #         retention="7 days",  # Keeps logs for a week.
+        #         encoding="utf-8",  # Standard encoding for log files.
+        #         # enqueue=True,  # For asynchronous logging; useful in high-throughput scenarios.
+        #         # Not in the original, but a good Loguru feature to be aware of.
+        #     )
+        # else:
+        #     # Ensure _file_sink_id is reset if file logging is disabled.
+        #     Logger._file_sink_id = None
 
     @property
     def _logger(self):

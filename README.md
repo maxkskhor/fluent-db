@@ -1,9 +1,16 @@
 # FluentDB
 
 ## Project Goal
-It is PandasAI + Gradio.
-Build a simple app completely in Python (with PandasAI and Gradio) that allows user to query a database.
+It is **PandasAI + Gradio**.
 
+Build a simple app completely in Python that allows users to query a database using natural language.
+
+![img.png](assets/img.png)
+
+## Getting Started
+1. Configure your LLM API setting here: `src/config/llm_config.py`.
+2. Configure your dataset. Here the sample is `src/frontend/heart.csv`.
+3. On your terminal run `python src/frontend/main.py` to launch a Gradio localhost website.
 
 ## Next Step
 1. Add streaming of different stages of agentic workflow for better user experience
