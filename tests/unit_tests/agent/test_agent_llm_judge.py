@@ -184,7 +184,7 @@ class TestAgentLLMJudge:
         response = pai.chat(question, *(heart_stroke, loans))
 
         prompt = self.evaluation_prompt.format(
-            context=df_context, question=question, code=response.last_code_executed
+            context=df_context, question=question, code=response.last_code_cleaned
         )
 
         completion = self.client.beta.chat.completions.parse(

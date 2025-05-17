@@ -18,7 +18,6 @@ class CodeGenerator:
         Generates code using a given LLM and performs validation and cleaning steps.
 
         Args:
-            context (PipelineContext): The pipeline context containing dataframes and logger.
             prompt (BasePrompt): The prompt to guide code generation.
 
         Returns:
@@ -35,7 +34,10 @@ class CodeGenerator:
             self._context.last_code_generated = code
             self._context.logger.log(f"Code Generated:\n{code}")
 
-            return self.validate_and_clean_code(code)
+            clean_code = self.validate_and_clean_code(code)
+            self._context.last_code_cleaned = clean_code
+
+            return clean_code
 
         except Exception as e:
             error_message = f"An error occurred during code generation: {e}"

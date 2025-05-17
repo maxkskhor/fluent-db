@@ -1,6 +1,6 @@
 import traceback
 import warnings
-from typing import Any, List, Optional, Union
+from typing import Any, List, NoReturn, Optional, Union
 
 import pandas as pd
 
@@ -17,7 +17,6 @@ from pandasai.core.user_query import UserQuery
 from pandasai.dataframe.base import DataFrame
 from pandasai.dataframe.virtual_dataframe import VirtualDataFrame
 from pandasai.exceptions import (
-    CodeExecutionError,
     InvalidLLMOutputType,
     MissingVectorStoreError,
 )
@@ -25,6 +24,7 @@ from pandasai.sandbox import Sandbox
 from pandasai.vectorstores.vectorstore import VectorStore
 
 from ..config import Config
+from ..core.response import BaseResponse
 from ..data_loader.duck_db_connection_manager import DuckDBConnectionManager
 from ..query_builders.base_query_builder import BaseQueryBuilder
 from ..query_builders.sql_parser import SQLParser
@@ -93,16 +93,20 @@ class Agent:
         """
         return self._process_query(query, output_type)
 
-    def generate_code(self, query: Union[UserQuery, str]) -> str:
-        """Generate code using the LLM."""
+    def chat_with_stream(self, query: str, output_type: Optional[str] = None):
+        ...
 
-        self._state.memory.add(str(query), is_user=True)
+    def follow_up_with_stream(self, query: str, output_type: Optional[str] = None):
+        ...
+
+    def generate_code(self) -> str:
+        """Generate code using the LLM."""
 
         self._state.logger.log("Generating new code...")
         prompt = get_chat_prompt_for_sql(self._state)
-
-        code = self._code_generator.generate_code(prompt)
         self._state.last_prompt_used = prompt
+        code = self._code_generator.generate_code(prompt)
+
         return code
 
     def execute_code(self, code: str) -> dict:
@@ -151,12 +155,12 @@ class Agent:
         else:
             return df_executor(final_query)
 
-    def generate_code_with_retries(self, query: str) -> Any:
+    def generate_code_with_retries(self) -> Any:
         """Execute the code with retry logic."""
         max_retries = self._state.config.max_retries
         attempts = 0
         try:
-            return self.generate_code(query)
+            return self.generate_code()
         except Exception as e:
             exception = e
             while attempts <= max_retries:
@@ -176,16 +180,18 @@ class Agent:
                         f"Retrying Code Generation ({attempts}/{max_retries})..."
                     )
 
-    def execute_with_retries(self, code: str) -> Any:
+    def execute_with_retries(self) -> Any | NoReturn:
         """Execute the code with retry logic."""
         max_retries = self._state.config.max_retries
         attempts = 0
 
         while attempts <= max_retries:
             try:
-                result = self.execute_code(code)
-                return self._response_parser.parse(result, code)
-            except CodeExecutionError as e:
+                result = self.execute_code(self._state.last_code_cleaned)
+                return self._response_parser.parse(
+                    result, self._state.last_code_cleaned
+                )
+            except Exception as e:
                 attempts += 1
                 if attempts > max_retries:
                     self._state.logger.log(f"Max retries reached. Error: {e}")
@@ -193,7 +199,7 @@ class Agent:
                 self._state.logger.log(
                     f"Retrying execution ({attempts}/{max_retries})..."
                 )
-                code = self._regenerate_code_after_error(code, e)
+                self._regenerate_code_after_error(self._state.last_code_cleaned, e)
 
     def train(
         self,
@@ -204,11 +210,11 @@ class Agent:
         """
         Trains the context to be passed to model
         Args:
-            queries (Optional[str], optional): user user
+            queries (Optional[str], optional): user
             codes (Optional[str], optional): generated code
             docs (Optional[List[str]], optional): additional docs
         Raises:
-            ImportError: if default vector db lib is not installed it raises an error
+            ImportError: if the default vector db lib is not installed, it raises an error
         """
         if self._state.vectorstore is None:
             raise MissingVectorStoreError(
@@ -236,7 +242,7 @@ class Agent:
 
     def add_message(self, message, is_user=False):
         """
-        Add message to the memory. This is useful when you want to add a message
+        Add a message to the memory. This is useful when you want to add a message
         to the memory without calling the chat function (for example, when you
         need to add a message from the agent).
         """
@@ -257,21 +263,23 @@ class Agent:
         )
 
         self._state.output_type = output_type
-        try:
-            self._state.assign_prompt_id()
+        self._state.assign_prompt_id()
+        self._state.memory.add(str(query), is_user=True)
 
+        try:
             # Generate code
-            code = self.generate_code_with_retries(query)
+            self.generate_code_with_retries()
 
             # Execute code with retries
-            result = self.execute_with_retries(code)
+            result = self.execute_with_retries()
 
             self._state.logger.log("Response generated successfully.")
             # Generate and return the final response
             return result
 
-        except CodeExecutionError:
-            return self._handle_exception(code)
+        except Exception as e:
+            self._state.logger.log(f"Exception: {e}")
+            return self._handle_exception(self._state.last_code_cleaned)
 
     def _regenerate_code_after_error(self, code: str, error: Exception) -> str:
         """Generate a new code snippet based on the error."""
@@ -287,21 +295,9 @@ class Agent:
 
         return self._code_generator.generate_code(prompt)
 
-    def _handle_exception(self, code: str) -> str:
+    def _handle_exception(self, code: str) -> BaseResponse:
         """Handle exceptions and return an error message."""
         error_message = traceback.format_exc()
         self._state.logger.log(f"Processing failed with error: {error_message}")
 
         return ErrorResponse(last_code_executed=code, error=error_message)
-
-    @property
-    def last_generated_code(self):
-        return self._state.last_code_generated
-
-    @property
-    def last_code_executed(self):
-        return self._state.last_code_generated
-
-    @property
-    def last_prompt_used(self):
-        return self._state.last_prompt_used

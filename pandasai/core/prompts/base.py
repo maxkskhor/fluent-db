@@ -83,4 +83,7 @@ class AbstractPrompt(ABC):
 
 
 # Make sure to export AbstractPrompt if using __all__
-__all__ = ["AbstractPrompt"]
+__all__ = [
+    "AbstractPrompt",
+    "BasePrompt",
+]

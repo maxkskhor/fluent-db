@@ -38,8 +38,6 @@ from .data_loader.semantic_layer_schema import (
 )
 from .dataframe import DataFrame, VirtualDataFrame
 from .helpers.sql_sanitizer import sanitize_file_name, sanitize_sql_table_name
-from .smart_dataframe import SmartDataframe
-from .smart_datalake import SmartDatalake
 
 
 def create(
@@ -317,11 +315,7 @@ __all__ = [
     "Agent",
     "DataFrame",
     "VirtualDataFrame",
-    "pandas",
     "chat",
     "follow_up",
     "load",
-    # Deprecated
-    "SmartDataframe",
-    "SmartDatalake",
 ]

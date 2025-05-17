@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from pandasai.config import Config, ConfigManager
 from pandasai.constants import DEFAULT_CHART_DIRECTORY
+from pandasai.core.prompts import BasePrompt
 from pandasai.data_loader.semantic_layer_schema import is_schema_source_same
 from pandasai.exceptions import InvalidConfigError
 from pandasai.helpers.folder import Folder
@@ -33,9 +34,9 @@ class AgentState:
     intermediate_values: Dict[str, Any] = field(default_factory=dict)
     logger: Optional[Logger] = None
     last_code_generated: Optional[str] = None
-    last_code_executed: Optional[str] = None
+    last_code_cleaned: Optional[str] = None
     last_prompt_id: str = None
-    last_prompt_used: str = None
+    last_prompt_used: str | BasePrompt = None
     output_type: Optional[str] = None
 
     def __post_init__(self):
@@ -66,7 +67,7 @@ class AgentState:
 
     def _configure(self):
         """Configure paths for charts."""
-        # Add project root path if save_charts_path is default
+        # Add a project root path if save_charts_path is default
         Folder.create(DEFAULT_CHART_DIRECTORY)
 
     def _get_config(self, config: Union[Config, dict, None]) -> Config:
@@ -93,7 +94,7 @@ class AgentState:
             self.logger.log(f"Prompt ID: {self.last_prompt_id}")
 
     def reset_intermediate_values(self):
-        """Resets the intermediate values dictionary."""
+        """Resets the intermediate values' dictionary."""
         self.intermediate_values.clear()
 
     def add(self, key: str, value: Any):
