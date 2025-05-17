@@ -1,155 +1,157 @@
-"""
-Logger class
+import logging  # Used for level constants in .log() method and for mapping
 
-This class is used to log messages to the console and/or a file.
+from loguru import logger
 
-Example:
-    ```python
-    from pandasai.helpers.logger import Logger
+# Mapping from standard Python logging level numbers to Loguru level names
+LOGGING_LEVEL_TO_LOGURU_LEVEL = {
+    logging.DEBUG: "DEBUG",
+    logging.INFO: "INFO",
+    logging.WARNING: "WARNING",
+    logging.ERROR: "ERROR",
+    logging.CRITICAL: "CRITICAL",
+}
 
-    logger = Logger()
-    logger.log("Hello, world!")
-    # 2021-08-01 12:00:00 [INFO] Hello, world!
-
-    logger.logs
-    #["Hello, world!"]
-    ```
-"""
-
-import inspect
-import logging
-import sys
-import time
-from typing import List
-
-from pydantic import BaseModel
-
-from pandasai.helpers.telemetry import scarf_analytics
-
-from .path import find_closest
-
-
-class Log(BaseModel):
-    """Log class"""
-
-    msg: str
-    level: int
+# Default Loguru level name to use if an unknown integer level is passed to the .log() method
+DEFAULT_LOGURU_LEVEL_NAME_FOR_LOG_METHOD = "INFO"
 
 
 class Logger:
-    """Logger class"""
+    """
+    Logger class for PandasAI, refactored to use Loguru.
+    This class configures the shared Loguru logger for console output
+    and optionally for file output ("pandasai.log"). When you create an
+    instance of this Logger, it sets up or reconfigures these logging sinks.
+    If you create multiple Logger instances, each new instance will update
+    the configuration, ensuring the logging settings reflect the
+    parameters of the most recently created Logger. This mimics the original
+    behavior where logger settings for "pandasai" would be updated upon new
+    Logger instantiations.
+    """
 
-    _logs: List[Log]
-    _logger: logging.Logger
-    _verbose: bool
-    _last_time: float
+    # Class variables to store the IDs of the sinks managed by this Logger.
+    # This allows the class to remove its specific sinks before re-adding them,
+    # preventing duplicate handlers and ensuring the latest configuration applies,
+    # without interfering with other potential Loguru sinks in the application.
+    _console_sink_id = None
+    _file_sink_id = None
 
     def __init__(self, save_logs: bool = True, verbose: bool = False):
-        """Initialize the logger"""
-        self._logs = []
-        self._verbose = verbose
-        self._last_time = time.time()
+        """
+        Initializes and configures the Loguru logger.
+        Args:
+            save_logs (bool): If True, logs will be saved to "pandasai.log". Defaults to True.
+            verbose (bool): If True, the console logging level is set to INFO.
+                            Otherwise, it's set to WARNING. Defaults to False.
+        """
+        self.verbose = verbose
+        self.save_logs = save_logs
+        self._configured_console_level_name = "INFO" if self.verbose else "WARNING"
 
-        if save_logs:
+        # Attempt to remove previously configured sinks by this class.
+        # This ensures that re-instantiating Logger updates the configuration
+        # rather than stacking multiple identical handlers.
+        if Logger._console_sink_id is not None:
             try:
-                filename = find_closest("pandasai.log")
+                logger.remove(Logger._console_sink_id)
             except ValueError:
-                filename = "pandasai.log"
-            handlers = [logging.FileHandler(filename)]
+                # Sink might have been already removed or was never added.
+                pass
+            Logger._console_sink_id = None
+
+        if Logger._file_sink_id is not None:
+            try:
+                logger.remove(Logger._file_sink_id)
+            except ValueError:
+                pass
+            Logger._file_sink_id = None
+
+        # Add a console sink. The original logger used sys.stdout.
+        # The original format: "%(asctime)s [%(levelname)s] %(message)s"
+        # Loguru format: "{time:YYYY-MM-DD HH:mm:ss} [{level}] {message}"
+        # Logger._console_sink_id = logger.add(
+        #     sys.stdout,
+        #     level=self._configured_console_level_name,
+        #     format="{time:YYYY-MM-DD HH:mm:ss} [{level}] {message}",
+        #     colorize=True,  # Loguru adds nice coloring to console output.
+        #     # Set to False if strict adherence to non-colored output is needed.
+        # )
+
+        if self.save_logs:
+            # The file log level should match the verbosity set for the console,
+            # mirroring the original behavior where the file handler respected the logger's level.
+            file_sink_level = self._configured_console_level_name
+            Logger._file_sink_id = logger.add(
+                "pandasai.log",  # Name of the log file, as in the original.
+                level=file_sink_level,
+                format="{time:YYYY-MM-DD HH:mm:ss} [{level}] {message}",  # Consistent format.
+                rotation="10 MB",  # Adds log rotation, a common best practice.
+                retention="7 days",  # Keeps logs for a week.
+                encoding="utf-8",  # Standard encoding for log files.
+                # enqueue=True,  # For asynchronous logging; useful in high-throughput scenarios.
+                # Not in the original, but a good Loguru feature to be aware of.
+            )
         else:
-            handlers = []
+            # Ensure _file_sink_id is reset if file logging is disabled.
+            Logger._file_sink_id = None
 
-        if verbose:
-            handlers.append(logging.StreamHandler(sys.stdout))
+    @property
+    def _logger(self):
+        """
+        Provides access to the Loguru logger instance.
+        In the original implementation, this property returned an instance of
+        `logging.Logger`. In this refactored version, it returns the global
+        `loguru.logger` object, which has been configured by this class.
+        """
+        return logger
 
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s [%(levelname)s] %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-            handlers=handlers,
-        )
-        self._logger = logging.getLogger(__name__)
+    def _get_level(self) -> str:
+        """
+        Returns the string name of the configured console logging level (e.g., "INFO", "WARNING").
+        This reflects the primary verbosity setting determined by the `verbose`
+        flag during the Logger's initialization. The original method returned an
+        integer (like `logging.INFO`). This version returns Loguru's string representation.
+        """
+        return self._configured_console_level_name
 
     def log(self, message: str, level: int = logging.INFO):
-        """Log a message"""
-
-        if level == logging.INFO:
-            self._logger.info(message)
-        elif level == logging.WARNING:
-            self._logger.warning(message)
-        elif level == logging.ERROR:
-            self._logger.error(message)
-        elif level == logging.CRITICAL:
-            self._logger.critical(message)
-
-        self._logs.append(
-            {
-                "msg": message,
-                "level": logging.getLevelName(level),
-                "time": self._calculate_time_diff(),
-                "source": self._invoked_from(),
-            }
-        )
-
-    def _invoked_from(self, level: int = 5) -> str:
-        """Return the name of the class that invoked the logger"""
-        calling_class = None
-        for frame_info in inspect.stack()[1:]:
-            frame_locals = frame_info[0].f_locals
-            calling_instance = frame_locals.get("self")
-            if calling_instance and calling_instance.__class__ != self.__class__:
-                calling_class = calling_instance.__class__.__name__
-                break
-            level -= 1
-            if level <= 0:
-                break
-        return calling_class
-
-    def _calculate_time_diff(self):
-        """Calculate the time difference since the last log"""
-        time_diff = time.time() - self._last_time
-        self._last_time = time.time()
-        return time_diff
-
-    @property
-    def logs(self) -> List[str]:
-        """Return the logs"""
-        return self._logs
-
-    @property
-    def verbose(self) -> bool:
-        """Return the verbose flag"""
-        return self._verbose
-
-    @verbose.setter
-    def verbose(self, verbose: bool):
-        """Set the verbose flag"""
-        self._verbose = verbose
-        self._logger.handlers = []
-        if verbose:
-            self._logger.addHandler(logging.StreamHandler(sys.stdout))
+        """
+        Logs a message with the specified standard Python logging level.
+        Args:
+            message (str): The message to be logged.
+            level (int): The logging level, using standard `logging` module constants
+                         (e.g., `logging.INFO`, `logging.WARNING`).
+                         Defaults to `logging.INFO`.
+        """
+        level_name = LOGGING_LEVEL_TO_LOGURU_LEVEL.get(level)
+        if level_name:
+            # .opt(depth=1) ensures Loguru reports the call site of this `log` method's
+            # caller, rather than this method itself, making debugging easier.
+            self._logger.opt(depth=1).log(level_name, message)
         else:
-            # remove the StreamHandler if it exists
-            for handler in self._logger.handlers:
-                if isinstance(handler, logging.StreamHandler):
-                    self._logger.removeHandler(handler)
+            # If an unknown integer level is provided, log it with a default
+            # level and include the original numeric level in the message.
+            self._logger.opt(depth=1).log(
+                DEFAULT_LOGURU_LEVEL_NAME_FOR_LOG_METHOD,
+                f"(Original level: {level}) {message}"
+            )
 
-    @property
-    def save_logs(self) -> bool:
-        """Return the save_logs flag"""
-        return len(self._logger.handlers) > 0
+    def info(self, message: str):
+        """Logs a message with INFO level."""
+        self._logger.opt(depth=1).info(message)
 
-    @save_logs.setter
-    def save_logs(self, save_logs: bool):
-        """Set the save_logs flag"""
-        if save_logs and not self.save_logs:
-            filename = find_closest("pandasai.log")
-            self._logger.addHandler(logging.FileHandler(filename))
-        elif not save_logs and self.save_logs:
-            # remove the FileHandler if it exists
-            for handler in self._logger.handlers:
-                if isinstance(handler, logging.FileHandler):
-                    self._logger.removeHandler(handler)
+    def warning(self, message: str):
+        """Logs a message with WARNING level."""
+        self._logger.opt(depth=1).warning(message)
 
+    def error(self, message: str):
+        """Logs a message with ERROR level."""
+        self._logger.opt(depth=1).error(message)
 
-scarf_analytics()
+    def debug(self, message: str):
+        """
+        Logs a message with DEBUG level.
+        Note: These messages will only be output if the configured level for a
+        sink (e.g., console or file) is set to DEBUG. If `verbose` was False
+        (setting console to WARNING), debug messages won't appear on the console.
+        """
+        self._logger.opt(depth=1).debug(message)

@@ -22,13 +22,12 @@ from pandasai.exceptions import (
 )
 from pandasai.sandbox import Sandbox
 from pandasai.vectorstores.vectorstore import VectorStore
-
+from .state import AgentState
 from ..config import Config
 from ..core.response import BaseResponse
 from ..data_loader.duck_db_connection_manager import DuckDBConnectionManager
 from ..query_builders.base_query_builder import BaseQueryBuilder
 from ..query_builders.sql_parser import SQLParser
-from .state import AgentState
 
 
 class Agent:
@@ -111,7 +110,7 @@ class Agent:
 
     def execute_code(self, code: str) -> dict:
         """Execute the generated code."""
-        self._state.logger.log(f"Executing code: {code}")
+        self._state.logger.log(f"Executing code:\n{code}")
 
         code_executor = CodeExecutor(self._state.config)
         code_executor.add_to_env("execute_sql_query", self._execute_sql_query)

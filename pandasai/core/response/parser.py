@@ -17,7 +17,8 @@ class ResponseParser:
         self._validate_response(result)
         return self._generate_response(result, last_code_executed)
 
-    def _generate_response(self, result: dict, last_code_executed: str = None):
+    @staticmethod
+    def _generate_response(result: dict, last_code_executed: str = None):
         if result["type"] == "number":
             return NumberResponse(result["value"], last_code_executed)
         elif result["type"] == "string":
@@ -27,9 +28,11 @@ class ResponseParser:
         elif result["type"] == "plot":
             return ChartResponse(result["value"], last_code_executed)
         else:
-            raise InvalidOutputValueMismatch(f"Invalid output type: {result['type']}")
+            raise InvalidOutputValueMismatch(f"Invalid output type: {result['type']}. "
+                                             f"Acceptable type is 'number', 'string', 'dataframe' or 'plot'.")
 
-    def _validate_response(self, result: dict):
+    @staticmethod
+    def _validate_response(result: dict):
         if (
             not isinstance(result, dict)
             or "type" not in result
