@@ -13,7 +13,8 @@ A user-friendly python app that lets people "talk" to their databases using ever
 3. On your terminal run `python src/frontend/main.py` to launch a Gradio localhost website.
 
 ## Next Step
-1. Add streaming of different stages of the agentic workflow for a better user experience.
+1. Proper streaming from LLM API
+2. Add Data Preview
 
 ## Note
 This project is a modified fork of [PandasAI](https://github.com/sinaptik-ai/pandas-ai).
