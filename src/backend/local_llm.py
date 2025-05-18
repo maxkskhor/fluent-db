@@ -6,7 +6,7 @@ from pandasai.llm import LLM
 from src.utils.tools import log_time
 
 
-class LocalLLM(LLM):
+class CustomLLM(LLM):
     def __init__(self, api_key: str | None, base_url: str, **kwargs):
         super().__init__()
         self.client = OpenAI(api_key=api_key, base_url=base_url).chat.completions
@@ -35,4 +35,4 @@ class LocalLLM(LLM):
 
     @property
     def type(self) -> str:
-        return "Local LLM"
+        return "Custom"

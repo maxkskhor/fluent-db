@@ -1,6 +1,8 @@
 import traceback
 import warnings
-from typing import Any, List, NoReturn, Optional, Union
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, List, Optional, Union, Generator
 
 import pandas as pd
 
@@ -11,9 +13,7 @@ from pandasai.core.prompts import (
     get_correct_error_prompt_for_sql,
     get_correct_output_type_error_prompt,
 )
-from pandasai.core.response.error import ErrorResponse
-from pandasai.core.response.parser import ResponseParser
-from pandasai.core.user_query import UserQuery
+from pandasai.core.response import ErrorResponse, ResponseParser
 from pandasai.dataframe.base import DataFrame
 from pandasai.dataframe.virtual_dataframe import VirtualDataFrame
 from pandasai.exceptions import (
@@ -28,6 +28,21 @@ from ..core.response import BaseResponse
 from ..data_loader.duck_db_connection_manager import DuckDBConnectionManager
 from ..query_builders.base_query_builder import BaseQueryBuilder
 from ..query_builders.sql_parser import SQLParser
+
+
+class Stage(Enum):
+    CODE_GENERATION = 'code_generation'
+    CODE_EXECUTION_FAILURE = 'code_execution_failure'
+    CODE_REGENERATION = 'code_regeneration'
+    FINAL_ERROR = 'final_error'
+    FINAL_RESULT = 'final_result'
+
+
+@dataclass
+class StreamResponse:
+    stage: Stage
+    content: BaseResponse | str
+    metadata: dict = field(default_factory=dict)
 
 
 class Agent:
@@ -79,24 +94,27 @@ class Agent:
         self._response_parser = ResponseParser()
         self._sandbox = sandbox
 
-    def chat(self, query: str, output_type: Optional[str] = None):
+    def chat(self, query: str, output_type: Optional[str] = None) -> BaseResponse:
         """
         Start a new chat interaction with the assistant on Dataframe.
         """
         self.start_new_conversation()
-        return self._process_query(query, output_type)
+        result_stream = list(self._process_query(query, output_type))
+        return result_stream[-1].content
 
-    def follow_up(self, query: str, output_type: Optional[str] = None):
+    def follow_up(self, query: str, output_type: Optional[str] = None) -> BaseResponse:
         """
         Continue the existing chat interaction with the assistant on Dataframe.
         """
-        return self._process_query(query, output_type)
+        result_stream = list(self._process_query(query, output_type))
+        return result_stream[-1].content
 
     def chat_with_stream(self, query: str, output_type: Optional[str] = None):
-        ...
+        self.start_new_conversation()
+        yield from self._process_query(query, output_type)
 
     def follow_up_with_stream(self, query: str, output_type: Optional[str] = None):
-        ...
+        yield from self._process_query(query, output_type)
 
     def generate_code(self) -> str:
         """Generate code using the LLM."""
@@ -120,66 +138,31 @@ class Agent:
 
         return code_executor.execute_and_return_result(code)
 
-    def _execute_sql_query(self, query: str) -> pd.DataFrame:
-        """
-        Executes an SQL query on registered DataFrames.
-
-        Args:
-            query (str): The SQL query to execute.
-
-        Returns:
-            pd.DataFrame: The result of the SQL query as a pandas DataFrame.
-        """
-        if not self._state.dfs:
-            raise ValueError("No DataFrames available to register for query execution.")
-
-        db_manager = DuckDBConnectionManager()
-
-        table_mapping = {}
-        df_executor = None
-
-        for df in self._state.dfs:
-            if hasattr(df, "query_builder"):
-                # df is a valid dataset with query builder, loader and execute_sql_query method
-                table_mapping[df.schema.name] = df.query_builder._get_table_expression()
-                df_executor = df.execute_sql_query
-            else:
-                # dataset created from loading a csv, no query builder available
-                db_manager.register(df.schema.name, df)
-
-        final_query = SQLParser.replace_table_and_column_names(query, table_mapping)
-
-        if not df_executor:
-            return db_manager.sql(final_query).df()
-        else:
-            return df_executor(final_query)
-
     def generate_code_with_retries(self) -> Any:
         """Execute the code with retry logic."""
         max_retries = self._state.config.max_retries
         attempts = 0
         try:
-            return self.generate_code()
+            code = self.generate_code()
+            yield StreamResponse(Stage.CODE_GENERATION, code)
+
         except Exception as e:
             exception = e
             while attempts <= max_retries:
                 try:
-                    return self._regenerate_code_after_error(
-                        self._state.last_code_generated, exception
-                    )
+                    yield from self._regenerate_code_after_error(self._state.last_code_generated, exception)
+                    break
                 except Exception as e:
                     exception = e
                     attempts += 1
                     if attempts > max_retries:
-                        self._state.logger.log(
-                            f"Maximum retry attempts exceeded. Last error: {e}"
-                        )
+                        self._state.logger.error(f"Maximum retry attempts exceeded. Last error: {e}")
                         raise
-                    self._state.logger.log(
+                    self._state.logger.warning(
                         f"Retrying Code Generation ({attempts}/{max_retries})..."
                     )
 
-    def execute_with_retries(self) -> Any | NoReturn:
+    def execute_with_retries(self) -> Generator[StreamResponse, None, None]:
         """Execute the code with retry logic."""
         max_retries = self._state.config.max_retries
         attempts = 0
@@ -187,18 +170,65 @@ class Agent:
         while attempts <= max_retries:
             try:
                 result = self.execute_code(self._state.last_code_cleaned)
-                return self._response_parser.parse(
-                    result, self._state.last_code_cleaned
+                yield StreamResponse(
+                    Stage.FINAL_RESULT,
+                    self._response_parser.parse(result, self._state.last_code_cleaned)
                 )
+                break
             except Exception as e:
                 attempts += 1
                 if attempts > max_retries:
-                    self._state.logger.log(f"Max retries reached. Error: {e}")
+                    self._state.logger.error(f"Max retries reached. Error: {e}")
                     raise
-                self._state.logger.log(
-                    f"Retrying execution ({attempts}/{max_retries})..."
-                )
-                self._regenerate_code_after_error(self._state.last_code_cleaned, e)
+                self._state.logger.warning(f"Retrying execution ({attempts}/{max_retries})...")
+
+                # update last_code_cleaned
+                yield from self._regenerate_code_after_error(self._state.last_code_cleaned, e)
+
+    def _process_query(self, query: str, output_type: Optional[str] = None) -> Generator[StreamResponse, None, None]:
+        """Process a user query and return the result."""
+        self._state.logger.log(f"Question: {query}")
+        self._state.logger.log(f"Running PandaAI with {self._state.config.llm.type} LLM...")
+        self._state.output_type = output_type
+        self._state.assign_prompt_id()
+        self._state.memory.add(str(query), is_user=True)
+
+        try:
+            # Generate code; Update last_code_generated and last_code_cleaned
+            yield from self.generate_code_with_retries()
+
+            # Execute code with retries
+            yield from self.execute_with_retries()
+
+            self._state.logger.log("Response generated successfully.")
+            # Generate and return the final response
+
+        except Exception as e:
+            self._state.logger.log(f"Exception: {e}")
+            yield StreamResponse(Stage.FINAL_ERROR, self._handle_exception(self._state.last_code_cleaned))
+
+    def _regenerate_code_after_error(self, code: str, error: Exception) -> Generator[StreamResponse, None, None]:
+        """Generate a new code snippet based on the error."""
+        error_trace = traceback.format_exc()
+        self._state.logger.log(f"Execution failed with error: {error_trace}")
+        yield StreamResponse(Stage.CODE_EXECUTION_FAILURE, error_trace)
+
+        if isinstance(error, InvalidLLMOutputType):
+            prompt = get_correct_output_type_error_prompt(
+                self._state, code, error_trace
+            )
+        else:
+            prompt = get_correct_error_prompt_for_sql(self._state, code, error_trace)
+
+        code = self._code_generator.generate_code(prompt)
+        yield StreamResponse(Stage.CODE_REGENERATION, code)
+
+    def _handle_exception(self, code: str) -> ErrorResponse:
+        """Handle exceptions and return an error message."""
+        error_message = traceback.format_exc()
+        self._state.logger.log(f"Processing failed with error: {error_message}")
+
+        return ErrorResponse(last_code_executed=code, error=error_message)
 
     def train(
         self,
@@ -253,50 +283,37 @@ class Agent:
         """
         self.clear_memory()
 
-    def _process_query(self, query: str, output_type: Optional[str] = None):
-        """Process a user query and return the result."""
-        query = UserQuery(query)
-        self._state.logger.log(f"Question: {query}")
-        self._state.logger.log(
-            f"Running PandaAI with {self._state.config.llm.type} LLM..."
-        )
 
-        self._state.output_type = output_type
-        self._state.assign_prompt_id()
-        self._state.memory.add(str(query), is_user=True)
+    def _execute_sql_query(self, query: str) -> pd.DataFrame:
+        """
+        Executes an SQL query on registered DataFrames.
 
-        try:
-            # Generate code
-            self.generate_code_with_retries()
+        Args:
+            query (str): The SQL query to execute.
 
-            # Execute code with retries
-            result = self.execute_with_retries()
+        Returns:
+            pd.DataFrame: The result of the SQL query as a pandas DataFrame.
+        """
+        if not self._state.dfs:
+            raise ValueError("No DataFrames available to register for query execution.")
 
-            self._state.logger.log("Response generated successfully.")
-            # Generate and return the final response
-            return result
+        db_manager = DuckDBConnectionManager()
 
-        except Exception as e:
-            self._state.logger.log(f"Exception: {e}")
-            return self._handle_exception(self._state.last_code_cleaned)
+        table_mapping = {}
+        df_executor = None
 
-    def _regenerate_code_after_error(self, code: str, error: Exception) -> str:
-        """Generate a new code snippet based on the error."""
-        error_trace = traceback.format_exc()
-        self._state.logger.log(f"Execution failed with error: {error_trace}")
+        for df in self._state.dfs:
+            if hasattr(df, "query_builder"):
+                # df is a valid dataset with query builder, loader and execute_sql_query method
+                table_mapping[df.schema.name] = df.query_builder._get_table_expression()
+                df_executor = df.execute_sql_query
+            else:
+                # dataset created from loading a csv, no query builder available
+                db_manager.register(df.schema.name, df)
 
-        if isinstance(error, InvalidLLMOutputType):
-            prompt = get_correct_output_type_error_prompt(
-                self._state, code, error_trace
-            )
+        final_query = SQLParser.replace_table_and_column_names(query, table_mapping)
+
+        if not df_executor:
+            return db_manager.sql(final_query).df()
         else:
-            prompt = get_correct_error_prompt_for_sql(self._state, code, error_trace)
-
-        return self._code_generator.generate_code(prompt)
-
-    def _handle_exception(self, code: str) -> BaseResponse:
-        """Handle exceptions and return an error message."""
-        error_message = traceback.format_exc()
-        self._state.logger.log(f"Processing failed with error: {error_message}")
-
-        return ErrorResponse(last_code_executed=code, error=error_message)
+            return df_executor(final_query)

@@ -1,9 +1,9 @@
 # FluentDB
 
 ## Project Goal
-It is **PandasAI + Gradio**.
+It is **[PandasAI](https://github.com/sinaptik-ai/pandas-ai) + [Gradio](https://www.gradio.app/)**.
 
-Build a simple app completely in Python that allows users to query a database using natural language.
+A user-friendly python app that lets people "talk" to their databases using everyday language.
 
 ![img.png](assets/img.png)
 
@@ -13,7 +13,7 @@ Build a simple app completely in Python that allows users to query a database us
 3. On your terminal run `python src/frontend/main.py` to launch a Gradio localhost website.
 
 ## Next Step
-1. Add streaming of different stages of agentic workflow for better user experience
+1. Add streaming of different stages of the agentic workflow for a better user experience.
 
 ## Note
 This project is a modified fork of [PandasAI](https://github.com/sinaptik-ai/pandas-ai).
